@@ -88,15 +88,12 @@ function createLoader(): (
       return undefined
     }
 
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-
     try {
-      const response = await fetch(url.toString(), {
+      const response = await $fetch.raw(url.toString(), {
+        method: 'GET',
+        timeout: FETCH_TIMEOUT_MS,
         redirect: 'follow',
-        signal: controller.signal,
       })
-      clearTimeout(timeoutId)
 
       if (response.status !== 200) {
         return undefined
@@ -115,7 +112,6 @@ function createLoader(): (
         content,
       }
     } catch {
-      clearTimeout(timeoutId)
       return undefined
     }
   }
@@ -156,18 +152,13 @@ function createResolver(): (specifier: string, referrer: string) => string {
 async function getTypesUrl(packageName: string, version: string): Promise<string | null> {
   const url = `https://esm.sh/${packageName}@${version}`
 
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-
   try {
-    const response = await fetch(url, {
+    const response = await $fetch.raw(url, {
       method: 'HEAD',
-      signal: controller.signal,
+      timeout: FETCH_TIMEOUT_MS,
     })
-    clearTimeout(timeoutId)
     return response.headers.get('x-typescript-types')
   } catch {
-    clearTimeout(timeoutId)
     return null
   }
 }
