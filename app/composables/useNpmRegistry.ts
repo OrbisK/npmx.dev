@@ -299,7 +299,7 @@ export function useNpmSearch(
     total: number
   } | null>(null)
 
-  const isLoadingMore = ref(false)
+  const isLoadingMore = shallowRef(false)
 
   // Standard (non-incremental) search implementation
   let lastSearch: NpmSearchResponse | undefined = undefined

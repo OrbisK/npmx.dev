@@ -17,14 +17,16 @@ const emit = defineEmits(['blur', 'focus'])
 const router = useRouter()
 const route = useRoute()
 
-const isSearchFocused = ref(false)
+const isSearchFocused = shallowRef(false)
 
 const showSearchBar = computed(() => {
   return route.name !== 'index'
 })
 
 // Local input value (updates immediately as user types)
-const searchQuery = ref((route.query.q as string) ?? '')
+const searchQuery = shallowRef(
+  (Array.isArray(route.query.q) ? route.query.q[0] : route.query.q) ?? '',
+)
 
 // Debounced URL update for search query
 const updateUrlQuery = debounce((value: string) => {
