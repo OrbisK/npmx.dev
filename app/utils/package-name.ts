@@ -1,4 +1,5 @@
 import validatePackageName from 'validate-npm-package-name'
+import { NPM_REGISTRY } from '#shared/utils/constants'
 
 /**
  * Normalize a package name for comparison by removing common variations.
