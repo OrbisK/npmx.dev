@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { useRouteQuery } from '@vueuse/router'
 
-const router = useRouter()
-
 definePageMeta({
   name: 'compare',
 })
+
+const router = useRouter()
 
 // Sync packages with URL query param (stable ref - doesn't change on other query changes)
 const packagesParam = useRouteQuery<string>('packages', '', { mode: 'replace' })
@@ -182,7 +182,10 @@ useSeoMeta({
       </section>
 
       <!-- Empty state -->
-      <section v-else class="text-center py-16 border border-dashed border-border rounded-lg">
+      <section
+        v-else
+        class="text-center px-1.5 py-16 border border-dashed border-border rounded-lg"
+      >
         <div class="i-carbon:compare w-12 h-12 text-fg-subtle mx-auto mb-4" aria-hidden="true" />
         <h2 class="font-mono text-lg text-fg-muted mb-2">
           {{ $t('compare.packages.empty_title') }}
