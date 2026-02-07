@@ -54,6 +54,8 @@ export function useNpmSearch(
   query: MaybeRefOrGetter<string>,
   options: MaybeRefOrGetter<NpmSearchOptions> = {},
 ) {
+  const { $npmRegistry } = useNuxtApp()
+
   // Client-side cache
   const cache = shallowRef<{
     query: string
@@ -144,7 +146,6 @@ export function useNpmSearch(
 
   // Fetch more results incrementally (only used in incremental mode)
   async function fetchMore(targetSize: number): Promise<void> {
-    const { $npmRegistry } = useNuxtApp()
     const q = toValue(query).trim()
     if (!q) {
       cache.value = null

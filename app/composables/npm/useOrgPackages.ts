@@ -1,3 +1,4 @@
+import type { NuxtApp } from '#app'
 import type { NpmSearchResponse, NpmSearchResult, MinimalPackument } from '#shared/types'
 import { emptySearchResponse, packumentToSearchResult } from './useNpmSearch'
 import { mapWithConcurrency } from '#shared/utils/async'
@@ -9,10 +10,10 @@ import { mapWithConcurrency } from '#shared/utils/async'
  * Note: npm bulk downloads API does not support scoped packages.
  */
 async function fetchBulkDownloads(
+  $npmApi: NuxtApp['$npmApi'],
   packageNames: string[],
   options: Parameters<typeof $fetch>[1] = {},
 ): Promise<Map<string, number>> {
-  const { $npmApi } = useNuxtApp()
   const downloads = new Map<string, number>()
   if (packageNames.length === 0) return downloads
 
@@ -82,7 +83,7 @@ async function fetchBulkDownloads(
 export function useOrgPackages(orgName: MaybeRefOrGetter<string>) {
   const asyncData = useLazyAsyncData(
     () => `org-packages:${toValue(orgName)}`,
-    async ({ $npmRegistry }, { signal }) => {
+    async ({ $npmRegistry, $npmApi }, { signal }) => {
       const org = toValue(orgName)
       if (!org) {
         return emptySearchResponse
@@ -138,7 +139,7 @@ export function useOrgPackages(orgName: MaybeRefOrGetter<string>) {
           )
         })(),
         // Fetch downloads in bulk
-        fetchBulkDownloads(packageNames, { signal }),
+        fetchBulkDownloads($npmApi, packageNames, { signal }),
       ])
 
       // Convert to search results with download data
