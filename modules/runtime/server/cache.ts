@@ -122,14 +122,24 @@ function getMockForUrl(url: string): MockResult | null {
     return { data: null }
   }
 
-  // Bundlephobia API - return mock size data
+  // Bundlephobia API - return mock size data.
+  // When a version is supplied, the size is derived deterministically from the
+  // version string so that compare-badge tests can verify per-version size
+  // deltas. Without a version we fall back to the legacy fixture value.
   if (host === 'bundlephobia.com' && pathname === '/api/size') {
     const packageSpec = searchParams.get('package')
     if (packageSpec) {
+      const parsed = parseScopedPackageWithVersion(packageSpec)
+      let size = 12345
+      if (parsed.version) {
+        let h = 0
+        for (const ch of parsed.version) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+        size = 10000 + (h % 50000)
+      }
       return {
         data: {
-          name: packageSpec.split('@')[0],
-          size: 12345,
+          name: parsed.name,
+          size,
           gzip: 4567,
           dependencyCount: 3,
         },

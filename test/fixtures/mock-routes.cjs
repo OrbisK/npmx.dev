@@ -384,9 +384,24 @@ function matchBundlephobiaApi(urlString) {
   if (url.pathname === '/api/size') {
     const packageSpec = url.searchParams.get('package')
     if (packageSpec) {
+      // Split on the LAST '@' so scoped packages (e.g. "@scope/name@1.0.0")
+      // resolve to (name="@scope/name", version="1.0.0").
+      const atIdx = packageSpec.lastIndexOf('@')
+      const isScopedWithoutVersion = atIdx <= 0
+      const name = isScopedWithoutVersion ? packageSpec : packageSpec.slice(0, atIdx)
+      const version = isScopedWithoutVersion ? null : packageSpec.slice(atIdx + 1)
+      // Deterministic size derived from the version when one is provided so
+      // that compare badge tests can verify size deltas. Falls back to 12345
+      // when no version is supplied to preserve previous fixture behavior.
+      let size = 12345
+      if (version) {
+        let h = 0
+        for (const ch of version) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+        size = 10000 + (h % 50000)
+      }
       return json({
-        name: packageSpec.split('@')[0],
-        size: 12345,
+        name,
+        size,
         gzip: 4567,
         dependencyCount: 3,
       })

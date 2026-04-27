@@ -1,5 +1,4 @@
 import * as v from 'valibot'
-import { createCanvas, type SKRSContext2D } from '@napi-rs/canvas'
 import { hash } from 'ohash'
 import { createError, getRouterParam, getQuery, setHeader } from 'h3'
 import { PackageRouteParamsSchema } from '#shared/schemas/package'
@@ -8,340 +7,20 @@ import { fetchNpmPackage } from '#server/utils/npm'
 import { assertValidPackageName } from '#shared/utils/npm'
 import { fetchPackageWithTypesAndFiles } from '#server/utils/file-tree'
 import { handleApiError } from '#server/utils/error-handler'
+import {
+  BADGE_COLORS,
+  BADGE_RENDERERS,
+  BadgeQuerySchema,
+  BadgeStyleSchema,
+  formatBadgeBytes,
+  formatBadgeDate,
+  formatBadgeNumber,
+  resolveBadgeAppearance,
+} from '#server/utils/badges/render'
 
 const NPM_DOWNLOADS_API = 'https://api.npmjs.org/downloads/point'
 const OSV_QUERY_API = 'https://api.osv.dev/v1/query'
 const BUNDLEPHOBIA_API = 'https://bundlephobia.com/api/size'
-
-const SafeStringSchema = v.pipe(v.string(), v.regex(/^[^<>"&]*$/, 'Invalid characters'))
-const SafeColorSchema = v.pipe(
-  v.string(),
-  v.transform(value => (value.startsWith('#') ? value : `#${value}`)),
-  v.hexColor(),
-)
-
-const QUERY_SCHEMA = v.object({
-  name: v.optional(v.string()),
-  label: v.optional(SafeStringSchema),
-  value: v.optional(SafeStringSchema),
-  color: v.optional(SafeColorSchema),
-  labelColor: v.optional(SafeColorSchema),
-})
-
-const COLORS = {
-  blue: '#3b82f6',
-  green: '#22c55e',
-  purple: '#a855f7',
-  orange: '#f97316',
-  red: '#ef4444',
-  cyan: '#06b6d4',
-  slate: '#64748b',
-  yellow: '#eab308',
-  black: '#0a0a0a',
-  white: '#ffffff',
-}
-
-const BADGE_PADDING_X = 8
-const MIN_BADGE_TEXT_WIDTH = 40
-const FALLBACK_VALUE_EXTRA_PADDING_X = 8
-const SHIELDS_LABEL_PADDING_X = 5
-const COMPACT_BADGE_PADDING_X = 5
-
-const BADGE_FONT_SHORTHAND = 'normal normal 400 11px Geist, system-ui, -apple-system, sans-serif'
-const SHIELDS_FONT_SHORTHAND = 'normal normal 400 11px Verdana, Geneva, DejaVu Sans, sans-serif'
-
-let cachedCanvasContext: SKRSContext2D | null | undefined
-
-const NARROW_CHARS = new Set([' ', '!', '"', "'", '(', ')', '*', ',', '-', '.', ':', ';', '|'])
-const MEDIUM_CHARS = new Set([
-  '#',
-  '$',
-  '+',
-  '/',
-  '<',
-  '=',
-  '>',
-  '?',
-  '@',
-  '[',
-  '\\',
-  ']',
-  '^',
-  '_',
-  '`',
-  '{',
-  '}',
-  '~',
-])
-
-const FALLBACK_WIDTHS = {
-  default: {
-    narrow: 3,
-    medium: 5,
-    digit: 6,
-    uppercase: 7,
-    other: 6,
-  },
-  shieldsio: {
-    narrow: 3,
-    medium: 5,
-    digit: 6,
-    uppercase: 7,
-    other: 5.5,
-  },
-} as const
-
-function estimateTextWidth(text: string, fallbackFont: 'default' | 'shieldsio'): number {
-  // Heuristic coefficients tuned to keep fallback rendering close to canvas metrics.
-  const widths = FALLBACK_WIDTHS[fallbackFont]
-  let totalWidth = 0
-
-  for (const character of text) {
-    if (NARROW_CHARS.has(character)) {
-      totalWidth += widths.narrow
-      continue
-    }
-
-    if (MEDIUM_CHARS.has(character)) {
-      totalWidth += widths.medium
-      continue
-    }
-
-    if (/\d/.test(character)) {
-      totalWidth += widths.digit
-      continue
-    }
-
-    if (/[A-Z]/.test(character)) {
-      totalWidth += widths.uppercase
-      continue
-    }
-
-    totalWidth += widths.other
-  }
-
-  return Math.max(1, Math.round(totalWidth))
-}
-
-function getCanvasContext(): SKRSContext2D | null {
-  if (cachedCanvasContext !== undefined) {
-    return cachedCanvasContext
-  }
-
-  try {
-    cachedCanvasContext = createCanvas(1, 1).getContext('2d')
-  } catch {
-    cachedCanvasContext = null
-  }
-
-  return cachedCanvasContext
-}
-
-function measureTextWidth(text: string, font: string): number | null {
-  const context = getCanvasContext()
-
-  if (context) {
-    context.font = font
-
-    const measuredWidth = context.measureText(text).width
-
-    if (Number.isFinite(measuredWidth) && measuredWidth > 0) {
-      return Math.ceil(measuredWidth)
-    }
-  }
-
-  return null
-}
-
-function measureDefaultTextWidth(text: string, fallbackExtraPadding = 0): number {
-  const measuredWidth = measureTextWidth(text, BADGE_FONT_SHORTHAND)
-
-  if (measuredWidth !== null) {
-    return Math.max(MIN_BADGE_TEXT_WIDTH, measuredWidth + BADGE_PADDING_X * 2)
-  }
-
-  return Math.max(
-    MIN_BADGE_TEXT_WIDTH,
-    estimateTextWidth(text, 'default') + BADGE_PADDING_X * 2 + fallbackExtraPadding,
-  )
-}
-
-function measureCompactTextWidth(text: string): number {
-  const measuredWidth = measureTextWidth(text, BADGE_FONT_SHORTHAND)
-
-  if (measuredWidth !== null) {
-    return measuredWidth + COMPACT_BADGE_PADDING_X * 2
-  }
-
-  return estimateTextWidth(text, 'default') + COMPACT_BADGE_PADDING_X * 2
-}
-
-function escapeXML(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
-
-function toLinear(c: number): number {
-  return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
-}
-
-function getContrastTextColor(bgHex: string): string {
-  let clean = bgHex.replace('#', '')
-  if (clean.length === 3)
-    clean = clean[0]! + clean[0]! + clean[1]! + clean[1]! + clean[2]! + clean[2]!
-  if (!/^[0-9a-f]{6}$/i.test(clean)) return '#ffffff'
-  const r = parseInt(clean.slice(0, 2), 16) / 255
-  const g = parseInt(clean.slice(2, 4), 16) / 255
-  const b = parseInt(clean.slice(4, 6), 16) / 255
-  const luminance = 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b)
-  // threshold where contrast ratio with white equals contrast ratio with black
-  return luminance > 0.179 ? '#000000' : '#ffffff'
-}
-
-function measureShieldsTextLength(text: string): number {
-  const measuredWidth = measureTextWidth(text, SHIELDS_FONT_SHORTHAND)
-
-  if (measuredWidth !== null) {
-    return Math.max(1, measuredWidth)
-  }
-
-  return estimateTextWidth(text, 'shieldsio')
-}
-
-interface BadgeRenderParams {
-  finalColor: string
-  finalLabel: string
-  finalLabelColor: string
-  finalValue: string
-  labelTextColor: string
-  valueTextColor: string
-}
-
-function renderGeistBadgeSvg(
-  params: BadgeRenderParams & { leftWidth: number; rightWidth: number },
-): string {
-  const {
-    finalColor,
-    finalLabel,
-    finalLabelColor,
-    finalValue,
-    labelTextColor,
-    valueTextColor,
-    leftWidth,
-    rightWidth,
-  } = params
-  const totalWidth = leftWidth + rightWidth
-  const height = 20
-  const escapedLabel = escapeXML(finalLabel)
-  const escapedValue = escapeXML(finalValue)
-
-  return `
-<svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="${height}" role="img" aria-label="${escapedLabel}: ${escapedValue}">
-  <clipPath id="r">
-    <rect width="${totalWidth}" height="${height}" rx="3" fill="#fff"/>
-  </clipPath>
-  <g clip-path="url(#r)">
-    <rect width="${leftWidth}" height="${height}" fill="${finalLabelColor}"/>
-    <rect x="${leftWidth}" width="${rightWidth}" height="${height}" fill="${finalColor}"/>
-  </g>
-  <g text-anchor="middle" font-family="Geist, system-ui, -apple-system, sans-serif" font-size="11">
-    <text x="${leftWidth / 2}" y="14" fill="${labelTextColor}">${escapedLabel}</text>
-    <text x="${leftWidth + rightWidth / 2}" y="14" fill="${valueTextColor}">${escapedValue}</text>
-  </g>
-</svg>
-  `.trim()
-}
-
-function renderDefaultBadgeSvg(params: BadgeRenderParams): string {
-  const leftWidth =
-    params.finalLabel.trim().length === 0 ? 0 : measureDefaultTextWidth(params.finalLabel)
-  const rightWidth = measureDefaultTextWidth(params.finalValue, FALLBACK_VALUE_EXTRA_PADDING_X)
-  return renderGeistBadgeSvg({ ...params, leftWidth, rightWidth })
-}
-
-function renderCompactBadgeSvg(params: BadgeRenderParams): string {
-  const leftWidth =
-    params.finalLabel.trim().length === 0 ? 0 : measureCompactTextWidth(params.finalLabel)
-  const rightWidth = measureCompactTextWidth(params.finalValue)
-  return renderGeistBadgeSvg({ ...params, leftWidth, rightWidth })
-}
-
-function renderShieldsBadgeSvg(params: {
-  finalColor: string
-  finalLabel: string
-  finalLabelColor: string
-  finalValue: string
-  labelTextColor: string
-  valueTextColor: string
-}): string {
-  const { finalColor, finalLabel, finalLabelColor, finalValue, labelTextColor, valueTextColor } =
-    params
-  const hasLabel = finalLabel.trim().length > 0
-
-  const leftTextLength = hasLabel ? measureShieldsTextLength(finalLabel) : 0
-  const rightTextLength = measureShieldsTextLength(finalValue)
-  const leftWidth = hasLabel ? leftTextLength + SHIELDS_LABEL_PADDING_X * 2 : 0
-  const rightWidth = rightTextLength + SHIELDS_LABEL_PADDING_X * 2
-  const totalWidth = leftWidth + rightWidth
-  const height = 20
-  const escapedLabel = escapeXML(finalLabel)
-  const escapedValue = escapeXML(finalValue)
-  const title = `${escapedLabel}: ${escapedValue}`
-
-  const leftCenter = Math.round((leftWidth / 2) * 10)
-  const rightCenter = Math.round((leftWidth + rightWidth / 2) * 10)
-  const leftTextLengthAttr = leftTextLength * 10
-  const rightTextLengthAttr = rightTextLength * 10
-
-  return `
-<svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="${height}" role="img" aria-label="${title}">
-  <linearGradient id="s" x2="0" y2="100%">
-    <stop offset="0" stop-color="#bbb" stop-opacity=".1"/>
-    <stop offset="1" stop-opacity=".1"/>
-  </linearGradient>
-  <clipPath id="r">
-    <rect width="${totalWidth}" height="${height}" rx="3" fill="#fff"/>
-  </clipPath>
-  <g clip-path="url(#r)">
-    <rect width="${leftWidth}" height="${height}" fill="${finalLabelColor}"/>
-    <rect x="${leftWidth}" width="${rightWidth}" height="${height}" fill="${finalColor}"/>
-    <rect width="${totalWidth}" height="${height}" fill="url(#s)"/>
-  </g>
-  <g text-anchor="middle" font-family="Verdana, Geneva, DejaVu Sans, sans-serif" text-rendering="geometricPrecision" font-size="110">
-    <text aria-hidden="true" x="${leftCenter}" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="${leftTextLengthAttr}">${escapedLabel}</text>
-    <text x="${leftCenter}" y="140" transform="scale(.1)" fill="${labelTextColor}" textLength="${leftTextLengthAttr}">${escapedLabel}</text>
-    <text aria-hidden="true" x="${rightCenter}" y="150" fill="#010101" fill-opacity=".3" transform="scale(.1)" textLength="${rightTextLengthAttr}">${escapedValue}</text>
-    <text x="${rightCenter}" y="140" transform="scale(.1)" fill="${valueTextColor}" textLength="${rightTextLengthAttr}">${escapedValue}</text>
-  </g>
-</svg>
-  `.trim()
-}
-
-function formatBytes(bytes: number): string {
-  if (!+bytes) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  const value = parseFloat((bytes / Math.pow(k, i)).toFixed(2))
-  return `${value} ${sizes[i]}`
-}
-
-function formatNumber(num: number): string {
-  return new Intl.NumberFormat('en-US', { notation: 'compact', compactDisplay: 'short' }).format(
-    num,
-  )
-}
-
-function formatDate(dateString: string): string {
-  return new Date(dateString).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  })
-}
 
 function getLatestVersion(pkgData: globalThis.Packument): string | undefined {
   return pkgData['dist-tags']?.latest
@@ -388,7 +67,7 @@ async function fetchInstallSize(packageName: string, version: string): Promise<n
 
 const badgeStrategies = {
   'name': async (pkgData: globalThis.Packument) => {
-    return { label: 'npm', value: pkgData.name, color: COLORS.slate }
+    return { label: 'npm', value: pkgData.name, color: BADGE_COLORS.slate }
   },
 
   'version': async (pkgData: globalThis.Packument, requestedVersion?: string) => {
@@ -396,7 +75,7 @@ const badgeStrategies = {
     return {
       label: 'version',
       value: version === 'unknown' ? version : `v${version}`,
-      color: COLORS.blue,
+      color: BADGE_COLORS.blue,
     }
   },
 
@@ -404,7 +83,7 @@ const badgeStrategies = {
     const latest = getLatestVersion(pkgData)
     const versionData = latest ? pkgData.versions?.[latest] : undefined
     const value = versionData?.license ?? 'unknown'
-    return { label: 'license', value, color: COLORS.green }
+    return { label: 'license', value, color: BADGE_COLORS.green }
   },
 
   'size': async (pkgData: globalThis.Packument) => {
@@ -415,39 +94,39 @@ const badgeStrategies = {
       const installSize = await fetchInstallSize(pkgData.name, latest)
       if (installSize !== null) bytes = installSize
     }
-    return { label: 'install size', value: formatBytes(bytes), color: COLORS.purple }
+    return { label: 'install size', value: formatBadgeBytes(bytes), color: BADGE_COLORS.purple }
   },
 
   'downloads': async (pkgData: globalThis.Packument) => {
     const count = await fetchDownloads(pkgData.name, 'last-month')
-    return { label: 'downloads/mo', value: formatNumber(count), color: COLORS.orange }
+    return { label: 'downloads/mo', value: formatBadgeNumber(count), color: BADGE_COLORS.orange }
   },
 
   'downloads-day': async (pkgData: globalThis.Packument) => {
     const count = await fetchDownloads(pkgData.name, 'last-day')
-    return { label: 'downloads/day', value: formatNumber(count), color: COLORS.orange }
+    return { label: 'downloads/day', value: formatBadgeNumber(count), color: BADGE_COLORS.orange }
   },
 
   'downloads-week': async (pkgData: globalThis.Packument) => {
     const count = await fetchDownloads(pkgData.name, 'last-week')
-    return { label: 'downloads/wk', value: formatNumber(count), color: COLORS.orange }
+    return { label: 'downloads/wk', value: formatBadgeNumber(count), color: BADGE_COLORS.orange }
   },
 
   'downloads-month': async (pkgData: globalThis.Packument) => {
     const count = await fetchDownloads(pkgData.name, 'last-month')
-    return { label: 'downloads/mo', value: formatNumber(count), color: COLORS.orange }
+    return { label: 'downloads/mo', value: formatBadgeNumber(count), color: BADGE_COLORS.orange }
   },
 
   'downloads-year': async (pkgData: globalThis.Packument) => {
     const count = await fetchDownloads(pkgData.name, 'last-year')
-    return { label: 'downloads/yr', value: formatNumber(count), color: COLORS.orange }
+    return { label: 'downloads/yr', value: formatBadgeNumber(count), color: BADGE_COLORS.orange }
   },
 
   'vulnerabilities': async (pkgData: globalThis.Packument) => {
     const latest = getLatestVersion(pkgData)
     const count = latest ? await fetchVulnerabilities(pkgData.name, latest) : 0
     const isSafe = count === 0
-    const color = isSafe ? COLORS.green : COLORS.red
+    const color = isSafe ? BADGE_COLORS.green : BADGE_COLORS.red
     return { label: 'vulns', value: String(count), color }
   },
 
@@ -455,23 +134,23 @@ const badgeStrategies = {
     const latest = getLatestVersion(pkgData)
     const versionData = latest ? pkgData.versions?.[latest] : undefined
     const count = Object.keys(versionData?.dependencies ?? {}).length
-    return { label: 'dependencies', value: String(count), color: COLORS.cyan }
+    return { label: 'dependencies', value: String(count), color: BADGE_COLORS.cyan }
   },
 
   'created': async (pkgData: globalThis.Packument) => {
     const dateStr = pkgData.time?.created ?? pkgData.time?.modified
-    return { label: 'created', value: formatDate(dateStr), color: COLORS.slate }
+    return { label: 'created', value: formatBadgeDate(dateStr), color: BADGE_COLORS.slate }
   },
 
   'updated': async (pkgData: globalThis.Packument) => {
     const dateStr = pkgData.time?.modified ?? pkgData.time?.created ?? new Date().toISOString()
-    return { label: 'updated', value: formatDate(dateStr), color: COLORS.slate }
+    return { label: 'updated', value: formatBadgeDate(dateStr), color: BADGE_COLORS.slate }
   },
 
   'engines': async (pkgData: globalThis.Packument) => {
     const latest = getLatestVersion(pkgData)
     const nodeVersion = (latest && pkgData.versions?.[latest]?.engines?.node) ?? '*'
-    return { label: 'node', value: nodeVersion, color: COLORS.yellow }
+    return { label: 'node', value: nodeVersion, color: BADGE_COLORS.yellow }
   },
 
   'types': async (pkgData: globalThis.Packument, requestedVersion?: string) => {
@@ -479,7 +158,7 @@ const badgeStrategies = {
     const versionData = targetVersion ? pkgData.versions?.[targetVersion] : undefined
 
     if (versionData && hasBuiltInTypes(versionData)) {
-      return { label: 'types', value: 'included', color: COLORS.blue }
+      return { label: 'types', value: 'included', color: BADGE_COLORS.blue }
     }
 
     const { pkg, typesPackage, files } = await fetchPackageWithTypesAndFiles(
@@ -495,22 +174,22 @@ const badgeStrategies = {
     switch (typesStatus.kind) {
       case 'included':
         value = 'included'
-        color = COLORS.blue
+        color = BADGE_COLORS.blue
         break
 
       case '@types':
         value = '@types'
-        color = COLORS.purple
+        color = BADGE_COLORS.purple
         if (typesStatus.deprecated) {
           value += ' (deprecated)'
-          color = COLORS.red
+          color = BADGE_COLORS.red
         }
         break
 
       case 'none':
       default:
         value = 'missing'
-        color = COLORS.slate
+        color = BADGE_COLORS.slate
         break
     }
 
@@ -519,7 +198,7 @@ const badgeStrategies = {
 
   'maintainers': async (pkgData: globalThis.Packument) => {
     const count = pkgData.maintainers?.length ?? 0
-    return { label: 'maintainers', value: String(count), color: COLORS.cyan }
+    return { label: 'maintainers', value: String(count), color: BADGE_COLORS.cyan }
   },
 
   'deprecated': async (pkgData: globalThis.Packument) => {
@@ -528,7 +207,7 @@ const badgeStrategies = {
     return {
       label: 'status',
       value: isDeprecated ? 'deprecated' : 'active',
-      color: isDeprecated ? COLORS.red : COLORS.green,
+      color: isDeprecated ? BADGE_COLORS.red : BADGE_COLORS.green,
     }
   },
 
@@ -536,28 +215,11 @@ const badgeStrategies = {
     const likesUtil = new PackageLikesUtils()
     const { totalLikes } = await likesUtil.getLikes(pkgData.name)
 
-    return { label: 'likes', value: String(totalLikes ?? 0), color: COLORS.red }
+    return { label: 'likes', value: String(totalLikes ?? 0), color: BADGE_COLORS.red }
   },
 }
 
 const BadgeTypeSchema = v.picklist(Object.keys(badgeStrategies) as [string, ...string[]])
-const BadgeStyleSchema = v.picklist(['default', 'shieldsio', 'compact'])
-
-const BADGE_RENDERERS = {
-  default: renderDefaultBadgeSvg,
-  shieldsio: renderShieldsBadgeSvg,
-  compact: renderCompactBadgeSvg,
-} as const
-
-const COMPACT_LABEL_MAP: Record<string, string> = {
-  'install size': 'size',
-  'downloads/day': 'dl/day',
-  'downloads/wk': 'dl/wk',
-  'downloads/mo': 'dl/mo',
-  'downloads/yr': 'dl/yr',
-  'dependencies': 'deps',
-  'maintainers': 'maint',
-}
 
 export default defineCachedEventHandler(
   async event => {
@@ -578,9 +240,9 @@ export default defineCachedEventHandler(
         version: rawVersion,
       })
 
-      const queryParams = v.safeParse(QUERY_SCHEMA, query)
+      const queryParams = v.safeParse(BadgeQuerySchema, query)
       const userColor = queryParams.success ? queryParams.output.color : undefined
-      const labelColor = queryParams.success ? queryParams.output.labelColor : undefined
+      const userLabelColor = queryParams.success ? queryParams.output.labelColor : undefined
       const showName = queryParams.success && queryParams.output.name === 'true'
       const userLabel = queryParams.success ? queryParams.output.label : undefined
       const userValue = queryParams.success ? queryParams.output.value : undefined
@@ -596,32 +258,21 @@ export default defineCachedEventHandler(
       const pkgData = await fetchNpmPackage(packageName)
       const strategyResult = await strategy(pkgData, requestedVersion)
 
-      const strategyLabel =
-        badgeStyle === 'compact'
-          ? (COMPACT_LABEL_MAP[strategyResult.label] ?? strategyResult.label)
-          : strategyResult.label
-      const finalLabel = userLabel ? userLabel : showName ? packageName : strategyLabel
-      const finalValue = userValue ? userValue : strategyResult.value
-
-      const rawColor = userColor ?? strategyResult.color
-      const finalColor = rawColor?.startsWith('#') ? rawColor : `#${rawColor}`
-
-      const defaultLabelColor = badgeStyle === 'shieldsio' ? '#555' : '#0a0a0a'
-      const rawLabelColor = labelColor ?? defaultLabelColor
-      const finalLabelColor = rawLabelColor.startsWith('#') ? rawLabelColor : `#${rawLabelColor}`
-
-      const labelTextColor = getContrastTextColor(finalLabelColor)
-      const valueTextColor = getContrastTextColor(finalColor)
+      const appearance = resolveBadgeAppearance({
+        strategyLabel: strategyResult.label,
+        strategyValue: strategyResult.value,
+        strategyColor: strategyResult.color,
+        badgeStyle,
+        packageName,
+        userLabel,
+        userValue,
+        userColor,
+        userLabelColor,
+        showName,
+      })
 
       const renderFn = BADGE_RENDERERS[badgeStyle]
-      const svg = renderFn({
-        finalColor,
-        finalLabel,
-        finalLabelColor,
-        finalValue,
-        labelTextColor,
-        valueTextColor,
-      })
+      const svg = renderFn(appearance)
 
       setHeader(event, 'Content-Type', 'image/svg+xml')
       setHeader(
