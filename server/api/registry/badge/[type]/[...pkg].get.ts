@@ -211,18 +211,28 @@ function measureShieldsTextLength(text: string): number {
   return estimateTextWidth(text, 'shieldsio')
 }
 
-function renderDefaultBadgeSvg(params: {
+interface BadgeRenderParams {
   finalColor: string
   finalLabel: string
   finalLabelColor: string
   finalValue: string
   labelTextColor: string
   valueTextColor: string
-}): string {
-  const { finalColor, finalLabel, finalLabelColor, finalValue, labelTextColor, valueTextColor } =
-    params
-  const leftWidth = finalLabel.trim().length === 0 ? 0 : measureDefaultTextWidth(finalLabel)
-  const rightWidth = measureDefaultTextWidth(finalValue, FALLBACK_VALUE_EXTRA_PADDING_X)
+}
+
+function renderGeistBadgeSvg(
+  params: BadgeRenderParams & { leftWidth: number; rightWidth: number },
+): string {
+  const {
+    finalColor,
+    finalLabel,
+    finalLabelColor,
+    finalValue,
+    labelTextColor,
+    valueTextColor,
+    leftWidth,
+    rightWidth,
+  } = params
   const totalWidth = leftWidth + rightWidth
   const height = 20
   const escapedLabel = escapeXML(finalLabel)
@@ -245,38 +255,18 @@ function renderDefaultBadgeSvg(params: {
   `.trim()
 }
 
-function renderCompactBadgeSvg(params: {
-  finalColor: string
-  finalLabel: string
-  finalLabelColor: string
-  finalValue: string
-  labelTextColor: string
-  valueTextColor: string
-}): string {
-  const { finalColor, finalLabel, finalLabelColor, finalValue, labelTextColor, valueTextColor } =
-    params
-  const leftWidth = finalLabel.trim().length === 0 ? 0 : measureCompactTextWidth(finalLabel)
-  const rightWidth = measureCompactTextWidth(finalValue)
-  const totalWidth = leftWidth + rightWidth
-  const height = 20
-  const escapedLabel = escapeXML(finalLabel)
-  const escapedValue = escapeXML(finalValue)
+function renderDefaultBadgeSvg(params: BadgeRenderParams): string {
+  const leftWidth =
+    params.finalLabel.trim().length === 0 ? 0 : measureDefaultTextWidth(params.finalLabel)
+  const rightWidth = measureDefaultTextWidth(params.finalValue, FALLBACK_VALUE_EXTRA_PADDING_X)
+  return renderGeistBadgeSvg({ ...params, leftWidth, rightWidth })
+}
 
-  return `
-<svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="${height}" role="img" aria-label="${escapedLabel}: ${escapedValue}">
-  <clipPath id="r">
-    <rect width="${totalWidth}" height="${height}" rx="3" fill="#fff"/>
-  </clipPath>
-  <g clip-path="url(#r)">
-    <rect width="${leftWidth}" height="${height}" fill="${finalLabelColor}"/>
-    <rect x="${leftWidth}" width="${rightWidth}" height="${height}" fill="${finalColor}"/>
-  </g>
-  <g text-anchor="middle" font-family="Geist, system-ui, -apple-system, sans-serif" font-size="11">
-    <text x="${leftWidth / 2}" y="14" fill="${labelTextColor}">${escapedLabel}</text>
-    <text x="${leftWidth + rightWidth / 2}" y="14" fill="${valueTextColor}">${escapedValue}</text>
-  </g>
-</svg>
-  `.trim()
+function renderCompactBadgeSvg(params: BadgeRenderParams): string {
+  const leftWidth =
+    params.finalLabel.trim().length === 0 ? 0 : measureCompactTextWidth(params.finalLabel)
+  const rightWidth = measureCompactTextWidth(params.finalValue)
+  return renderGeistBadgeSvg({ ...params, leftWidth, rightWidth })
 }
 
 function renderShieldsBadgeSvg(params: {
