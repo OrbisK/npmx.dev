@@ -45,6 +45,7 @@ const BADGE_PADDING_X = 8
 const MIN_BADGE_TEXT_WIDTH = 40
 const FALLBACK_VALUE_EXTRA_PADDING_X = 8
 const SHIELDS_LABEL_PADDING_X = 5
+const COMPACT_BADGE_PADDING_X = 5
 
 const BADGE_FONT_SHORTHAND = 'normal normal 400 11px Geist, system-ui, -apple-system, sans-serif'
 const SHIELDS_FONT_SHORTHAND = 'normal normal 400 11px Verdana, Geneva, DejaVu Sans, sans-serif'
@@ -165,6 +166,16 @@ function measureDefaultTextWidth(text: string, fallbackExtraPadding = 0): number
   )
 }
 
+function measureCompactTextWidth(text: string): number {
+  const measuredWidth = measureTextWidth(text, BADGE_FONT_SHORTHAND)
+
+  if (measuredWidth !== null) {
+    return measuredWidth + COMPACT_BADGE_PADDING_X * 2
+  }
+
+  return estimateTextWidth(text, 'default') + COMPACT_BADGE_PADDING_X * 2
+}
+
 function escapeXML(str: string): string {
   return str
     .replace(/&/g, '&amp;')
@@ -212,6 +223,40 @@ function renderDefaultBadgeSvg(params: {
     params
   const leftWidth = finalLabel.trim().length === 0 ? 0 : measureDefaultTextWidth(finalLabel)
   const rightWidth = measureDefaultTextWidth(finalValue, FALLBACK_VALUE_EXTRA_PADDING_X)
+  const totalWidth = leftWidth + rightWidth
+  const height = 20
+  const escapedLabel = escapeXML(finalLabel)
+  const escapedValue = escapeXML(finalValue)
+
+  return `
+<svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="${height}" role="img" aria-label="${escapedLabel}: ${escapedValue}">
+  <clipPath id="r">
+    <rect width="${totalWidth}" height="${height}" rx="3" fill="#fff"/>
+  </clipPath>
+  <g clip-path="url(#r)">
+    <rect width="${leftWidth}" height="${height}" fill="${finalLabelColor}"/>
+    <rect x="${leftWidth}" width="${rightWidth}" height="${height}" fill="${finalColor}"/>
+  </g>
+  <g text-anchor="middle" font-family="Geist, system-ui, -apple-system, sans-serif" font-size="11">
+    <text x="${leftWidth / 2}" y="14" fill="${labelTextColor}">${escapedLabel}</text>
+    <text x="${leftWidth + rightWidth / 2}" y="14" fill="${valueTextColor}">${escapedValue}</text>
+  </g>
+</svg>
+  `.trim()
+}
+
+function renderCompactBadgeSvg(params: {
+  finalColor: string
+  finalLabel: string
+  finalLabelColor: string
+  finalValue: string
+  labelTextColor: string
+  valueTextColor: string
+}): string {
+  const { finalColor, finalLabel, finalLabelColor, finalValue, labelTextColor, valueTextColor } =
+    params
+  const leftWidth = finalLabel.trim().length === 0 ? 0 : measureCompactTextWidth(finalLabel)
+  const rightWidth = measureCompactTextWidth(finalValue)
   const totalWidth = leftWidth + rightWidth
   const height = 20
   const escapedLabel = escapeXML(finalLabel)
@@ -506,7 +551,23 @@ const badgeStrategies = {
 }
 
 const BadgeTypeSchema = v.picklist(Object.keys(badgeStrategies) as [string, ...string[]])
-const BadgeStyleSchema = v.picklist(['default', 'shieldsio'])
+const BadgeStyleSchema = v.picklist(['default', 'shieldsio', 'compact'])
+
+const BADGE_RENDERERS = {
+  default: renderDefaultBadgeSvg,
+  shieldsio: renderShieldsBadgeSvg,
+  compact: renderCompactBadgeSvg,
+} as const
+
+const COMPACT_LABEL_MAP: Record<string, string> = {
+  'install size': 'size',
+  'downloads/day': 'dl/day',
+  'downloads/wk': 'dl/wk',
+  'downloads/mo': 'dl/mo',
+  'downloads/yr': 'dl/yr',
+  'dependencies': 'deps',
+  'maintainers': 'maint',
+}
 
 export default defineCachedEventHandler(
   async event => {
@@ -545,7 +606,11 @@ export default defineCachedEventHandler(
       const pkgData = await fetchNpmPackage(packageName)
       const strategyResult = await strategy(pkgData, requestedVersion)
 
-      const finalLabel = userLabel ? userLabel : showName ? packageName : strategyResult.label
+      const strategyLabel =
+        badgeStyle === 'compact'
+          ? (COMPACT_LABEL_MAP[strategyResult.label] ?? strategyResult.label)
+          : strategyResult.label
+      const finalLabel = userLabel ? userLabel : showName ? packageName : strategyLabel
       const finalValue = userValue ? userValue : strategyResult.value
 
       const rawColor = userColor ?? strategyResult.color
@@ -558,7 +623,7 @@ export default defineCachedEventHandler(
       const labelTextColor = getContrastTextColor(finalLabelColor)
       const valueTextColor = getContrastTextColor(finalColor)
 
-      const renderFn = badgeStyle === 'shieldsio' ? renderShieldsBadgeSvg : renderDefaultBadgeSvg
+      const renderFn = BADGE_RENDERERS[badgeStyle]
       const svg = renderFn({
         finalColor,
         finalLabel,
