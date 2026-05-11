@@ -164,15 +164,7 @@ const diffLink = computed((): RouteLocationRaw | null => {
 
 const timelineLink = computed((): RouteLocationRaw | null => {
   if (props.pkg == null || props.resolvedVersion == null) return null
-  const split = props.pkg.name.split('/')
-  return {
-    name: 'timeline',
-    params: {
-      org: split.length === 2 ? split[0] : undefined,
-      packageName: split.length === 2 ? split[1]! : split[0]!,
-      version: props.resolvedVersion,
-    },
-  }
+  return packageTimelineRoute(props.pkg.name, props.resolvedVersion)
 })
 
 useShortcuts({
@@ -235,7 +227,7 @@ useShortcuts({
   </header>
   <div
     ref="header"
-    class="w-full bg-bg sticky top-14 z-10 border-b border-border pt-2"
+    class="w-full bg-bg sticky top-14 z-50 border-b border-border pt-2"
     :class="[$style.packageHeader]"
     data-testid="package-subheader"
   >
