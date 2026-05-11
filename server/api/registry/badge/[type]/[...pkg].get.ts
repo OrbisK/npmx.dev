@@ -276,7 +276,7 @@ function renderShieldsBadgeSvg(params: {
   finalValue: string
   labelTextColor: string
   valueTextColor: string
-}): string {
+function renderShieldsBadgeSvg(params: BadgeRenderParams): string {
   const { finalColor, finalLabel, finalLabelColor, finalValue, labelTextColor, valueTextColor } =
     params
   const hasLabel = finalLabel.trim().length > 0
