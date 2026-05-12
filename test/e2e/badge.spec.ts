@@ -11,6 +11,11 @@ async function fetchBadge(page: { request: { get: (url: string) => Promise<any> 
   return { response, body }
 }
 
+function getSvgWidth(body: string): number {
+  const match = body.match(/<svg[^>]*\swidth="(\d+)"/)
+  return match ? Number(match[1]) : 0
+}
+
 test.describe('badge API', () => {
   const badgeMap: Record<string, string> = {
     'version': 'version',
@@ -198,11 +203,6 @@ test.describe('badge API', () => {
   })
 
   test.describe('style=compact', () => {
-    function getSvgWidth(body: string): number {
-      const match = body.match(/<svg[^>]*\swidth="(\d+)"/)
-      return match ? Number(match[1]) : 0
-    }
-
     test('uses the modern Geist renderer at the same 20px height as default', async ({
       page,
       baseURL,

@@ -269,13 +269,6 @@ function renderCompactBadgeSvg(params: BadgeRenderParams): string {
   return renderGeistBadgeSvg({ ...params, leftWidth, rightWidth })
 }
 
-function renderShieldsBadgeSvg(params: {
-  finalColor: string
-  finalLabel: string
-  finalLabelColor: string
-  finalValue: string
-  labelTextColor: string
-  valueTextColor: string
 function renderShieldsBadgeSvg(params: BadgeRenderParams): string {
   const { finalColor, finalLabel, finalLabelColor, finalValue, labelTextColor, valueTextColor } =
     params
